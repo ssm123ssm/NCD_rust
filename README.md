@@ -104,3 +104,7 @@ git push origin v0.1.0
 
 - Current CI builds are unsigned.
 - To ship production-ready macOS and Windows distributions, add platform signing and notarization to the workflow.
+
+## License
+
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
