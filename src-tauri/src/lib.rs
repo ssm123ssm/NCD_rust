@@ -335,10 +335,10 @@ fn query_data(
                             format!("No population data found for sex '{}' and year {}", sex, year)
                         })?;
 
-                    let rate_17_49 = safe_divide(live_17_49, pop_17_49);
-                    let rate_50_69 = safe_divide(live_50_69, pop_50_69);
-                    let rate_70_plus = safe_divide(live_70_plus, pop_70_plus);
-                    let crude_rate_total = safe_divide(live_total, pop_total);
+                    let rate_17_49 = safe_divide(live_17_49, pop_17_49) * 100.0;
+                    let rate_50_69 = safe_divide(live_50_69, pop_50_69) * 100.0;
+                    let rate_70_plus = safe_divide(live_70_plus, pop_70_plus) * 100.0;
+                    let crude_rate_total = safe_divide(live_total, pop_total) * 100.0;
                     let standardized_rate_total = rate_17_49 * reference_weights.0
                         + rate_50_69 * reference_weights.1
                         + rate_70_plus * reference_weights.2;

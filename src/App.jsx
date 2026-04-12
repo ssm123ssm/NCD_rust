@@ -109,7 +109,10 @@ function getCauseSpecificChoices(disease, sex) {
     } else if (sex === "f") {
       entries = causeSpecificCodes.cancer.f;
     } else {
-      const combined = [...causeSpecificCodes.cancer.m, ...causeSpecificCodes.cancer.f];
+      const combined = [
+        ...causeSpecificCodes.cancer.m,
+        ...causeSpecificCodes.cancer.f,
+      ];
       const seen = new Set();
       entries = combined.filter(([value]) => {
         if (seen.has(value)) {
@@ -307,8 +310,14 @@ function TrendChart({ data, sexKeys }) {
     <div className="chart-wrap interactive-chart">
       <TrendLegend sexKeys={sexKeys} />
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke="rgba(16, 32, 51, 0.09)" strokeDasharray="3 3" />
+        <LineChart
+          data={data}
+          margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
+        >
+          <CartesianGrid
+            stroke="rgba(16, 32, 51, 0.09)"
+            strokeDasharray="3 3"
+          />
           <XAxis
             dataKey="year"
             tickLine={false}
@@ -360,14 +369,20 @@ function TotalAreaChart({ data, sexKeys }) {
     <div className="chart-wrap interactive-chart">
       <TotalLegend sexKeys={sexKeys} />
       <ResponsiveContainer width="100%" height={320}>
-        <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+        <AreaChart
+          data={data}
+          margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
+        >
           <defs>
             <linearGradient id="totalGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#1f7a63" stopOpacity={0.35} />
               <stop offset="95%" stopColor="#1f7a63" stopOpacity={0.04} />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="rgba(16, 32, 51, 0.09)" strokeDasharray="3 3" />
+          <CartesianGrid
+            stroke="rgba(16, 32, 51, 0.09)"
+            strokeDasharray="3 3"
+          />
           <XAxis
             dataKey="year"
             tickLine={false}
@@ -432,8 +447,14 @@ function LatestBarsChart({ latestBySex, sexKeys }) {
     <div className="chart-wrap interactive-chart">
       <LatestBarsLegend sexKeys={sexKeys} />
       <ResponsiveContainer width="100%" height={320}>
-        <BarChart data={barData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
-          <CartesianGrid stroke="rgba(16, 32, 51, 0.09)" strokeDasharray="3 3" />
+        <BarChart
+          data={barData}
+          margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
+        >
+          <CartesianGrid
+            stroke="rgba(16, 32, 51, 0.09)"
+            strokeDasharray="3 3"
+          />
           <XAxis
             dataKey="name"
             tickLine={false}
@@ -447,7 +468,10 @@ function LatestBarsChart({ latestBySex, sexKeys }) {
             tick={{ fill: "#6c7985", fontSize: 12 }}
             tickFormatter={formatValue}
           />
-          <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(16, 32, 51, 0.04)" }} />
+          <Tooltip
+            content={<ChartTooltip />}
+            cursor={{ fill: "rgba(16, 32, 51, 0.04)" }}
+          />
           {sexKeys.map((sexKey) => (
             <Bar
               key={sexKey}
@@ -470,7 +494,9 @@ function LatestPlotTitle({ metric, sexLabel }) {
 
 function App() {
   const [selectedMetric, setSelectedMetric] = useState(metricOptions[0].value);
-  const [selectedDisease, setSelectedDisease] = useState(diseaseOptions[0].value);
+  const [selectedDisease, setSelectedDisease] = useState(
+    diseaseOptions[0].value,
+  );
   const [selectedSex, setSelectedSex] = useState(sexOptions[0].value);
   const [selectedCauseCode, setSelectedCauseCode] = useState("__all__");
   const [datasetsBySex, setDatasetsBySex] = useState({});
@@ -556,10 +582,14 @@ function App() {
   );
   const showCauseDrilldown = hasCauseSpecificDrilldown(selectedDisease);
   const selectedCauseLabel =
-    causeChoices.find((choice) => choice.value === selectedCauseCode)?.label ?? "All";
+    causeChoices.find((choice) => choice.value === selectedCauseCode)?.label ??
+    "All";
   const chartRows = mergeDatasets(datasetsBySex, activeSexKeys);
   const latestBySex = Object.fromEntries(
-    activeSexKeys.map((sexKey) => [sexKey, datasetsBySex[sexKey]?.at(-1) ?? null]),
+    activeSexKeys.map((sexKey) => [
+      sexKey,
+      datasetsBySex[sexKey]?.at(-1) ?? null,
+    ]),
   );
   const latestYear =
     activeSexKeys
@@ -567,7 +597,9 @@ function App() {
       .filter((year) => typeof year === "number")
       .sort((a, b) => b - a)[0] ?? "N/A";
   const peakTotal = activeSexKeys
-    .flatMap((sexKey) => (datasetsBySex[sexKey] ?? []).map((row) => row.liveTotal))
+    .flatMap((sexKey) =>
+      (datasetsBySex[sexKey] ?? []).map((row) => row.liveTotal),
+    )
     .reduce((max, value) => Math.max(max, value), Number.NEGATIVE_INFINITY);
   const statusLabel =
     status === "loading"
@@ -579,20 +611,22 @@ function App() {
     selectedMetric === "admissions"
       ? "Hover the plots, use the legend, and zoom with the brush to inspect live admissions."
       : selectedMetric === "crude_rates"
-      ? "Crude rates are admissions divided by the matching population for each year."
-      : "Standardized rates use 2012 as the reference year.";
+        ? "Crude rates are admissions divided by the matching population for each year."
+        : "Standardized rates use 2012 as the reference year.";
   const plotOneTitle =
     selectedMetric === "admissions"
       ? "Age-group admissions trends"
-      : "Age-group rate trends";
+      : "Age-group rate trends (per 100,000 population)";
   const plotTwoTitle =
     selectedMetric === "admissions"
       ? "Total admissions over time"
       : selectedMetric === "crude_rates"
-        ? "Crude total rate over time"
-        : "Standardized total rate over time";
-  const plotThreeTitle =
-    LatestPlotTitle({ metric: selectedMetric, sexLabel: selectedSexLabel });
+        ? "Crude rate over time (per 100,000 population)"
+        : "Standardized rate over time (per 100,000 population)";
+  const plotThreeTitle = LatestPlotTitle({
+    metric: selectedMetric,
+    sexLabel: selectedSexLabel,
+  });
 
   async function runBackendTest() {
     setTestStatus("loading");
@@ -629,7 +663,9 @@ function App() {
                   key={option.value}
                   type="button"
                   className={
-                    option.value === selectedMetric ? "segment active" : "segment"
+                    option.value === selectedMetric
+                      ? "segment active"
+                      : "segment"
                   }
                   onClick={() => setSelectedMetric(option.value)}
                 >
@@ -695,7 +731,6 @@ function App() {
               </div>
             </FilterSection>
           ) : null}
-
         </div>
 
         <div className="sidebar-footer">
@@ -759,7 +794,9 @@ function App() {
             <div className="metric-card">
               <span className="metric-label">Peak total</span>
               <strong>
-                {peakTotal === Number.NEGATIVE_INFINITY ? "N/A" : formatValue(peakTotal)}
+                {peakTotal === Number.NEGATIVE_INFINITY
+                  ? "N/A"
+                  : formatValue(peakTotal)}
               </strong>
             </div>
           </div>
@@ -789,7 +826,10 @@ function App() {
               <span className="plot-eyebrow">Plot 03</span>
               <h3>{plotThreeTitle}</h3>
             </div>
-            <LatestBarsChart latestBySex={latestBySex} sexKeys={activeSexKeys} />
+            <LatestBarsChart
+              latestBySex={latestBySex}
+              sexKeys={activeSexKeys}
+            />
           </article>
         </section>
       </main>
