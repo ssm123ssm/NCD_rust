@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Area,
@@ -7,15 +7,20 @@ import {
   BarChart,
   Brush,
   CartesianGrid,
+  ComposedChart,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import rustLogo from "./assets/rust-logo.svg";
+import { forecastArima } from "./forecast.js";
 import "./App.css";
+
+const FORECAST_HORIZON = 10;
 
 const diseaseOptions = [
   { label: "All-cause admissions", value: "allcause" },
@@ -492,6 +497,273 @@ function LatestPlotTitle({ metric, sexLabel }) {
   return `Latest ${noun} snapshot by sex (${sexLabel})`;
 }
 
+// Fit an auto-order ARIMA to each active sex's Total series and assemble a single
+// chart dataset: historical points plus FORECAST_HORIZON projected years with
+// 80% / 95% prediction bands. The forecast is anchored to the last observed
+// point so the dashed projection visually continues the solid history.
+function buildForecast(chartRows, sexKeys) {
+  if (!chartRows.length) {
+    return null;
+  }
+
+  const lastYear = chartRows[chartRows.length - 1].year;
+  const forecastsBySex = {};
+  const models = {};
+
+  sexKeys.forEach((sexKey) => {
+    const series = chartRows
+      .map((row) => row[`liveTotal_${sexKey}`])
+      .filter((value) => typeof value === "number" && !Number.isNaN(value));
+    const result = forecastArima(series, FORECAST_HORIZON);
+    if (result) {
+      forecastsBySex[sexKey] = result;
+      models[sexKey] = { order: result.order };
+    }
+  });
+
+  if (!Object.keys(forecastsBySex).length) {
+    return null;
+  }
+
+  const rows = chartRows.map((row) => {
+    const next = { year: row.year };
+    sexKeys.forEach((sexKey) => {
+      next[`hist_${sexKey}`] = row[`liveTotal_${sexKey}`] ?? null;
+    });
+    return next;
+  });
+
+  // Anchor each forecast line/band at the final observed value.
+  const lastRow = rows[rows.length - 1];
+  sexKeys.forEach((sexKey) => {
+    if (!forecastsBySex[sexKey]) {
+      return;
+    }
+    const anchor = lastRow[`hist_${sexKey}`];
+    if (typeof anchor === "number") {
+      lastRow[`fcst_${sexKey}`] = anchor;
+      lastRow[`band80_${sexKey}`] = [anchor, anchor];
+      lastRow[`band95_${sexKey}`] = [anchor, anchor];
+    }
+  });
+
+  for (let h = 0; h < FORECAST_HORIZON; h += 1) {
+    const next = { year: lastYear + h + 1 };
+    sexKeys.forEach((sexKey) => {
+      const forecast = forecastsBySex[sexKey];
+      if (!forecast) {
+        return;
+      }
+      next[`fcst_${sexKey}`] = forecast.point[h];
+      next[`band80_${sexKey}`] = [forecast.lower80[h], forecast.upper80[h]];
+      next[`band95_${sexKey}`] = [forecast.lower95[h], forecast.upper95[h]];
+    });
+    rows.push(next);
+  }
+
+  return { data: rows, models, lastYear, sexKeys };
+}
+
+function formatOrder(order) {
+  return `ARIMA(${order[0]},${order[1]},${order[2]})`;
+}
+
+function ForecastLegend({ forecast, sexKeys }) {
+  const orderLabel = [
+    ...new Set(
+      sexKeys
+        .map((sexKey) => forecast.models[sexKey]?.order)
+        .filter(Boolean)
+        .map(formatOrder),
+    ),
+  ].join(" · ");
+
+  return (
+    <div className="chart-legend-block compact">
+      <div className="chart-legend-group">
+        <span className="chart-legend-label">Projection</span>
+        <div className="chart-legend-items">
+          <span className="chart-legend-item">
+            <i className="chart-legend-line" style={{ "--legend-color": "#102033" }} />
+            Observed
+          </span>
+          <span className="chart-legend-item">
+            <i
+              className="chart-legend-line dashed"
+              style={{ "--legend-color": "#102033" }}
+            />
+            Forecast {orderLabel ? `· ${orderLabel}` : ""}
+          </span>
+          <span className="chart-legend-item">
+            <i
+              className="chart-legend-dot"
+              style={{ "--legend-color": "rgba(16, 32, 51, 0.18)" }}
+            />
+            80% / 95% interval
+          </span>
+        </div>
+      </div>
+
+      {sexKeys.length > 1 ? (
+        <div className="chart-legend-group">
+          <span className="chart-legend-label">Sex</span>
+          <div className="chart-legend-items">
+            {sexKeys.map((sexKey) => (
+              <span key={sexKey} className="chart-legend-item">
+                <i
+                  className="chart-legend-dot"
+                  style={{ "--legend-color": sexPlotMeta[sexKey].fill }}
+                />
+                {sexPlotMeta[sexKey].label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ForecastTooltip({ active, label, payload, sexKeys }) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  const row = payload[0].payload;
+
+  return (
+    <div className="chart-tooltip">
+      <p className="chart-tooltip-title">Year {label}</p>
+      <div className="chart-tooltip-list">
+        {sexKeys.map((sexKey) => {
+          const observed = row[`hist_${sexKey}`];
+          const projected = row[`fcst_${sexKey}`];
+          const band = row[`band95_${sexKey}`];
+          const isObserved = typeof observed === "number";
+          const value = isObserved ? observed : projected;
+          if (typeof value !== "number") {
+            return null;
+          }
+
+          const name =
+            sexKeys.length > 1
+              ? `${sexPlotMeta[sexKey].label} (${isObserved ? "obs." : "fcst."})`
+              : isObserved
+                ? "Observed"
+                : "Forecast";
+
+          return (
+            <div key={sexKey} className="chart-tooltip-row">
+              <span className="chart-tooltip-name">
+                <i style={{ backgroundColor: sexPlotMeta[sexKey].fill }} />
+                {name}
+              </span>
+              <strong>
+                {formatValue(value)}
+                {!isObserved && Array.isArray(band)
+                  ? ` (${formatValue(band[0])} – ${formatValue(band[1])})`
+                  : ""}
+              </strong>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ForecastChart({ forecast, sexKeys }) {
+  if (!forecast) {
+    return <div className="chart-empty">Not enough history to project a trend.</div>;
+  }
+
+  const { data, lastYear } = forecast;
+
+  return (
+    <div className="chart-wrap interactive-chart">
+      <ForecastLegend forecast={forecast} sexKeys={sexKeys} />
+      <ResponsiveContainer width="100%" height={320}>
+        <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+          <CartesianGrid stroke="rgba(16, 32, 51, 0.09)" strokeDasharray="3 3" />
+          <XAxis
+            dataKey="year"
+            tickLine={false}
+            axisLine={false}
+            tick={{ fill: "#6c7985", fontSize: 12 }}
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            tick={{ fill: "#6c7985", fontSize: 12 }}
+            tickFormatter={formatValue}
+          />
+          <Tooltip content={<ForecastTooltip sexKeys={sexKeys} />} />
+          {sexKeys.map((sexKey) => (
+            <Area
+              key={`band95_${sexKey}`}
+              dataKey={`band95_${sexKey}`}
+              stroke="none"
+              fill={sexPlotMeta[sexKey].fill}
+              fillOpacity={0.1}
+              isAnimationActive={false}
+              connectNulls
+            />
+          ))}
+          {sexKeys.map((sexKey) => (
+            <Area
+              key={`band80_${sexKey}`}
+              dataKey={`band80_${sexKey}`}
+              stroke="none"
+              fill={sexPlotMeta[sexKey].fill}
+              fillOpacity={0.18}
+              isAnimationActive={false}
+              connectNulls
+            />
+          ))}
+          {sexKeys.map((sexKey) => (
+            <Line
+              key={`hist_${sexKey}`}
+              type="monotone"
+              dataKey={`hist_${sexKey}`}
+              name="Observed"
+              stroke={sexPlotMeta[sexKey].fill}
+              strokeWidth={3}
+              dot={false}
+              connectNulls
+              activeDot={{ r: 5, strokeWidth: 0 }}
+            />
+          ))}
+          {sexKeys.map((sexKey) => (
+            <Line
+              key={`fcst_${sexKey}`}
+              type="monotone"
+              dataKey={`fcst_${sexKey}`}
+              name="Forecast"
+              stroke={sexPlotMeta[sexKey].fill}
+              strokeWidth={2.4}
+              strokeDasharray="6 4"
+              dot={false}
+              connectNulls
+              activeDot={{ r: 5, strokeWidth: 0 }}
+            />
+          ))}
+          <ReferenceLine
+            x={lastYear}
+            stroke="rgba(16, 32, 51, 0.35)"
+            strokeDasharray="4 4"
+            label={{
+              value: "forecast",
+              position: "insideTopRight",
+              fill: "#6c7985",
+              fontSize: 11,
+            }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function App() {
   const [selectedMetric, setSelectedMetric] = useState(metricOptions[0].value);
   const [selectedDisease, setSelectedDisease] = useState(
@@ -585,6 +857,10 @@ function App() {
     causeChoices.find((choice) => choice.value === selectedCauseCode)?.label ??
     "All";
   const chartRows = mergeDatasets(datasetsBySex, activeSexKeys);
+  const forecast = useMemo(
+    () => buildForecast(chartRows, activeSexKeys),
+    [chartRows, activeSexKeys],
+  );
   const latestBySex = Object.fromEntries(
     activeSexKeys.map((sexKey) => [
       sexKey,
@@ -627,6 +903,13 @@ function App() {
     metric: selectedMetric,
     sexLabel: selectedSexLabel,
   });
+  const projectionNoun =
+    selectedMetric === "admissions"
+      ? "total admissions"
+      : selectedMetric === "crude_rates"
+        ? "crude rate"
+        : "standardized rate";
+  const plotFourTitle = `${FORECAST_HORIZON}-year ${projectionNoun} projection (ARIMA)`;
 
   async function runBackendTest() {
     setTestStatus("loading");
@@ -830,6 +1113,14 @@ function App() {
               latestBySex={latestBySex}
               sexKeys={activeSexKeys}
             />
+          </article>
+
+          <article className="plot-card">
+            <div className="plot-card-header">
+              <span className="plot-eyebrow">Plot 04</span>
+              <h3>{plotFourTitle}</h3>
+            </div>
+            <ForecastChart forecast={forecast} sexKeys={activeSexKeys} />
           </article>
         </section>
       </main>

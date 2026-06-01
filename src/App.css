@@ -571,7 +571,8 @@ button {
   border-top-color: #102033;
 }
 
-.chart-legend-pattern.dashed {
+.chart-legend-pattern.dashed,
+.chart-legend-line.dashed {
   border-top-style: dashed;
 }
 
