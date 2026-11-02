@@ -14,6 +14,11 @@
 // back to ARIMA(0, d, 0) with drift (a random walk with drift), the standard
 // robust baseline. Prediction intervals come from the MA(infinity) psi-weights
 // of the full differenced process: se_k = sigma * sqrt(sum_{j<k} psi_j^2).
+//
+// Admissions and rates can't be negative, so the model is fitted to
+// log(y + offset) and the point forecast and interval bounds are mapped back
+// with exp(.) - offset. This gives multiplicative (right-skewed) intervals that
+// stay non-negative; the back-transformed point forecast is the median.
 
 const Z_80 = 1.2815515594600006;
 const Z_95 = 1.959963984540054;
@@ -303,6 +308,17 @@ function buildIntervals(point, sigma2, psi, horizon) {
   return { lower80, upper80, lower95, upper95 };
 }
 
+// Offset added before taking logs: 0 for a strictly positive series, half the
+// smallest positive value when there are zeros, and null (no transform) if the
+// series has genuinely negative values.
+function chooseLogOffset(values) {
+  const min = Math.min(...values);
+  if (min < 0) return null;
+  if (min > 0) return 0;
+  const positives = values.filter((value) => value > 0);
+  return positives.length ? Math.min(...positives) / 2 : 1;
+}
+
 /**
  * Forecast a univariate annual series with an auto-order ARIMA(p, d, q).
  *
@@ -319,6 +335,34 @@ export function forecastArima(series, horizon = 10) {
     return null;
   }
 
+  const offset = chooseLogOffset(clean);
+  if (offset === null) {
+    return fitAndForecast(clean, horizon);
+  }
+
+  const fit = fitAndForecast(
+    clean.map((value) => Math.log(value + offset)),
+    horizon,
+  );
+  if (!fit) return null;
+
+  const back = (values) =>
+    values.map((value) => Math.max(0, Math.exp(value) - offset));
+  const result = {
+    point: back(fit.point),
+    lower80: back(fit.lower80),
+    upper80: back(fit.upper80),
+    lower95: back(fit.lower95),
+    upper95: back(fit.upper95),
+    order: fit.order,
+  };
+  // upper95 is the widest bound, so it is the first to overflow exp().
+  return result.upper95.every(Number.isFinite) ? result : null;
+}
+
+// Fit the auto-order ARIMA to an already-cleaned series and forecast it on the
+// same scale.
+function fitAndForecast(clean, horizon) {
   const maxD = clean.length >= 10 ? 2 : 1;
   const d = chooseDifferenceOrder(clean, maxD);
   const w0 = diffN(clean, d);
