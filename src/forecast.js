@@ -10,7 +10,9 @@
 //
 // Candidate fits whose AR part is non-stationary or whose MA part is
 // non-invertible are rejected, so the search can't lock onto an explosive model
-// that blows the 10-year extrapolation up. If nothing valid is found we fall
+// that blows the 10-year extrapolation up. So are fits whose own recursive
+// residuals are much larger than the innovations they were estimated with,
+// which happens when an MA root sits close to the unit circle. If nothing valid is found we fall
 // back to ARIMA(0, d, 0) with drift (a random walk with drift), the standard
 // robust baseline. Prediction intervals come from the MA(infinity) psi-weights
 // of the full differenced process: se_k = sigma * sqrt(sum_{j<k} psi_j^2).
@@ -23,6 +25,9 @@
 const Z_80 = 1.2815515594600006;
 const Z_95 = 1.959963984540054;
 const ROOT_EPS = 1e-6;
+// Reject a fit when its recursive residuals have an RMS more than this many
+// times the fitted innovation SD (healthy fits sit near 1).
+const MAX_RESIDUAL_RMS_RATIO = 2;
 
 function mean(values) {
   if (!values.length) return 0;
@@ -138,6 +143,21 @@ function isInvertible(theta) {
   return rootsOutsideUnitCircle(theta.slice());
 }
 
+// One-step residuals of a fitted ARMA, filtered recursively through w with
+// pre-sample innovations set to 0. These seed the MA part of the forecast.
+function modelResiduals(w, phi, theta) {
+  const n = w.length;
+  const eps = new Array(n).fill(0);
+  const maxLag = Math.max(phi.length, theta.length);
+  for (let t = maxLag; t < n; t += 1) {
+    let pred = 0;
+    for (let i = 0; i < phi.length; i += 1) pred += phi[i] * w[t - 1 - i];
+    for (let j = 0; j < theta.length; j += 1) pred += theta[j] * eps[t - 1 - j];
+    eps[t] = w[t] - pred;
+  }
+  return eps;
+}
+
 // Hannan-Rissanen estimation of a zero-mean ARMA(p, q) on the centred series w.
 // `start` fixes the first fitted index so AICc is comparable across (p, q).
 function fitArma(w, p, q, m, start) {
@@ -200,6 +220,18 @@ function fitArma(w, p, q, m, start) {
 
   const sigma2 = sse / nEff;
   if (!(sigma2 > 0) || !Number.isFinite(sigma2)) return null;
+
+  // sigma2 is measured against the long-AR proxy innovations, but forecasts are
+  // seeded from the model's own recursive residuals. Near the invertibility
+  // boundary (e.g. an MA(1) with theta ~ 0.99) those can be many times larger,
+  // throwing the first forecast steps far off. Pure AR fits reproduce the OLS
+  // residuals exactly, so in practice this only screens out MA fits.
+  const resid = modelResiduals(w, phi, theta);
+  let residSq = 0;
+  for (let t = start; t < n; t += 1) residSq += resid[t] ** 2;
+  if (Math.sqrt(residSq / nEff) > MAX_RESIDUAL_RMS_RATIO * Math.sqrt(sigma2)) {
+    return null;
+  }
 
   return { phi, theta, sigma2, nEff };
 }
@@ -414,14 +446,7 @@ function fitAndForecast(clean, horizon) {
   const { phi, theta, sigma2 } = best;
 
   // Recompute model residuals across the centred series to seed MA terms.
-  const eps = new Array(n).fill(0);
-  const maxLag = Math.max(phi.length, theta.length);
-  for (let t = maxLag; t < n; t += 1) {
-    let pred = 0;
-    for (let i = 0; i < phi.length; i += 1) pred += phi[i] * w[t - 1 - i];
-    for (let j = 0; j < theta.length; j += 1) pred += theta[j] * eps[t - 1 - j];
-    eps[t] = w[t] - pred;
-  }
+  const eps = modelResiduals(w, phi, theta);
 
   // Recursively forecast the centred differenced series.
   const wHist = w.slice();
